@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 大文件：模型权重（>100MB，超出 GitHub 单文件限制，通过 Release 分发，不入库）
+model/
+*.pt
+*.onnx
+*.engine
+
+# 海康 MVS SDK 的 Windows DLL：本地均为 LFS 指针残骸（真文件不存在），
+# 且 Linux 运行时加载的是 SDK 安装目录的 .so，不入库（装 MVS SDK 即可）
+camera_socket-main/lib/
+
+# 大文件：测试数据集与输出
+test-datasets/
+test_output/
+*.zip
+
+# 运行时生成的帧
+data/frame.jpg
+
+# IDE / 编辑器
+.vscode/
+.idea/
+
+# ZCode 会话目录
+.zcode/

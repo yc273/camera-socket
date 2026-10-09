@@ -1,0 +1,12 @@
+{
+  "category": "board",
+  "request_action": "board_angle",
+  "timestamp": "2026-09-24 12:23:28.752",
+  "image_file": "board_20260924-122328752_677db248.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ],
+  "points": -0.00783
+}

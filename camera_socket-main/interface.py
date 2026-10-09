@@ -304,21 +304,26 @@ class CameraApp(QMainWindow):
 def fix_qt_plugin_path():
     """修复 cv2 与 PyQt5 的 Qt 插件冲突。
 
-    pip 版 opencv-python 在 import 时会把 QT_QPA_PLATFORM_PLUGIN_PATH 指向它自带的
-    cv2/qt/plugins,该插件与 PyQt5 的 Qt 不兼容，会导致 QApplication 崩溃
-    ("Could not load the Qt platform plugin xcb")。
-    这里在创建 QApplication 之前，把插件路径改回 conda 环境里 PyQt5 实际使用的目录，
-    既不影响 cv2 已加载的功能，也让 PyQt5 正常启动。
+    pip 版 opencv-python 在 import 时会把 QT_QPA_PLATFORM_PLUGIN_PATH 强制改写成
+    它自带的 cv2/qt/plugins，该插件与系统 PyQt5 使用的 Qt 不兼容，会导致
+    QApplication 崩溃（"Could not load the Qt platform plugin xcb"）。
+    因此必须在 import cv2 之后、创建 QApplication 之前调用本函数，
+    把插件路径改回系统 Qt 的 platforms 目录（本机 PyQt5 经 system_pyqt5.pth
+    使用 /usr/lib/python3/dist-packages 的系统安装，插件随系统 Qt 放在系统目录）。
     """
-    import os as _os
-    # 候选路径：conda 环境根目录下的 plugins（conda-forge 版 PyQt5 的插件位置）
-    env_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))))
-    # 上面取到的是项目目录，改用 sys.executable 推导 conda 环境根
-    env_root = _os.path.dirname(_os.path.dirname(sys.executable))  # .../envs/camera
-    candidate = _os.path.join(env_root, "plugins", "platforms")
-    if _os.path.exists(candidate) and _os.path.isdir(candidate):
-        _os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = _os.path.dirname(candidate)  # .../plugins
-        print(f"[qt插件修复] 已设置 QT_QPA_PLATFORM_PLUGIN_PATH -> {os.path.dirname(candidate)}")
+    candidates = [
+        # 系统 Qt 的 xcb 插件（Ubuntu arm64 / x86_64 常见位置）
+        "/usr/lib/aarch64-linux-gnu/qt5/plugins/platforms",
+        "/usr/lib/x86_64-linux-gnu/qt5/plugins/platforms",
+        # conda-forge 版 PyQt5（如有）的插件位置
+        os.path.join(os.path.dirname(os.path.dirname(sys.executable)), "plugins", "platforms"),
+    ]
+    for path in candidates:
+        if os.path.isfile(os.path.join(path, "libqxcb.so")):
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = path
+            print(f"[qt插件修复] QT_QPA_PLATFORM_PLUGIN_PATH -> {path}")
+            return
+    print("[qt插件修复] 未找到含 libqxcb.so 的插件目录，Qt 可能仍会报 xcb 错误")
 
 
 if __name__ == "__main__":

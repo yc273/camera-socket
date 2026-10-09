@@ -1,0 +1,12 @@
+{
+  "category": "frame",
+  "request_action": "get_frame",
+  "timestamp": "2026-10-09 14:08:34.981",
+  "image_file": "frame_20261009-140834981_857bc853.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ],
+  "points": null
+}

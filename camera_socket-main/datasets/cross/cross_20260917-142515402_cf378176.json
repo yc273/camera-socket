@@ -1,0 +1,17 @@
+{
+  "category": "cross",
+  "request_action": "cross_points_without_granding",
+  "timestamp": "2026-09-17 14:25:15.402",
+  "image_file": "cross_20260917-142515402_cf378176.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ],
+  "points": [
+    [
+      1765.53,
+      1011.49
+    ]
+  ]
+}

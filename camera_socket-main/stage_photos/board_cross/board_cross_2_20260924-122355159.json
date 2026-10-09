@@ -1,0 +1,11 @@
+{
+  "stage": "board_cross",
+  "seq": "2",
+  "timestamp": "2026-09-24 12:23:55.159",
+  "image_file": "board_cross_2_20260924-122355159.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ]
+}

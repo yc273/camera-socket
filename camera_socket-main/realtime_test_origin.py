@@ -525,6 +525,7 @@ class RealTimePoseDetector:
 
     def _detection_loop(self):
         """独立的检测线程循环，在后台持续运行"""
+        last_timing_print = 0.0  # 性能汇总打印节流
         while self.running:
             try:
                 # 等待新帧到达
@@ -539,6 +540,10 @@ class RealTimePoseDetector:
                     if self.current_frame is None:
                         continue
                     frame_to_detect = self.current_frame.copy()
+
+                # 本帧计时起点（处理耗时 + 各模型推理耗时）
+                iter_start = time.perf_counter()
+                model_times = {}
 
                 # 检测信息置零
                 detection_info_stud = None
@@ -559,6 +564,7 @@ class RealTimePoseDetector:
 
                 # 螺钉检测 - 先处理帧（伽马调整）
                 if self.model_stud_switch:
+                    t_model = time.perf_counter()
                     results_stud = self.model_stud.predict(
                         source=intensive_frame,
                         imgsz=1280,
@@ -568,12 +574,14 @@ class RealTimePoseDetector:
                         verbose=False,
                         stream=True,
                         max_det=1
-                        
+
                     )
                     detection_info_stud = self._parse_detection_results(results_stud, self.model_stud)
+                    model_times['stud'] = (time.perf_counter() - t_model) * 1000
 
                 # 十字交叉点检测，碰钉十字线和装板十字线定位公用同一模型，检测结果中区分
                 if self.model_cross_switch or self.model_board_switch:
+                    t_model = time.perf_counter()
                     results_cross = self.model_cross.predict(
                         source=intensive_frame,
                         imgsz=1280,
@@ -589,9 +597,11 @@ class RealTimePoseDetector:
                     detection_info_cross_all, detection_info_cross_single = self._parse_detection_results_with_confidence(results_cross, self.model_cross)
                     detection_info_board_angle = self.calculate_board_angle(detection_info_cross_all)
                     detection_info_board_position = self.calculate_board_position(detection_info_cross_all)
-    
+                    model_times['cross/board'] = (time.perf_counter() - t_model) * 1000
+
                 if self.model_u_switch:
                     # U型件六角螺套检测
+                    t_model = time.perf_counter()
                     results_u = self.model_u.predict(
                         source=intensive_frame,
                         imgsz=1280,
@@ -603,7 +613,9 @@ class RealTimePoseDetector:
                         max_det=1
                     )
                     detection_info_u = self._parse_detection_results(results_u, self.model_u)
+                    model_times['u'] = (time.perf_counter() - t_model) * 1000
                 if self.model_slot_switch:
+                    t_model = time.perf_counter()
                     results_slot = self.model_slot.predict(
                         source=intensive_frame,
                         imgsz=1280,
@@ -616,8 +628,10 @@ class RealTimePoseDetector:
                     )
                     detection_info_slot_origin = self._parse_detection_results(results_slot, self.model_slot)#保存原始检测点位置信息，供后续计算使用
                     detection_info_slot = self.calculate_slot_position(detection_info_slot_origin)#计算十字接缝位置（使用所有点的几何中心）
+                    model_times['slot'] = (time.perf_counter() - t_model) * 1000
 
                 if self.model_detect_switch:
+                    t_model = time.perf_counter()
                     results_detect = self.model_detect.predict(
                         source=intensive_frame,
                         imgsz=1280,
@@ -628,6 +642,7 @@ class RealTimePoseDetector:
                         stream=True
                     )
                     detection_info_detect = self._parse_detection_results_box(results_detect, self.model_detect)
+                    model_times['detect'] = (time.perf_counter() - t_model) * 1000
 
                 # 更新检测结果（使用锁保证线程安全）
                 with self.frame_lock:
@@ -639,6 +654,13 @@ class RealTimePoseDetector:
                     self.detection_result_board_position = detection_info_board_position
                     self.detection_result_slot = detection_info_slot
                     self.detection_result_detect = detection_info_detect
+
+                # 性能汇总：每5秒打印一次各启用模型的单帧推理耗时
+                now = time.perf_counter()
+                if now - last_timing_print >= 5.0:
+                    last_timing_print = now
+                    detail = " | ".join(f"{k}: {v:.0f}ms" for k, v in model_times.items()) or "无模型启用"
+                    print(f"[性能] 单帧处理 {(now - iter_start) * 1000:.0f}ms | {detail}")
 
             except Exception as e:
                 print(f"检测线程出错: {e}")

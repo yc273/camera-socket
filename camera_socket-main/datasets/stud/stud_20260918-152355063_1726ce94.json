@@ -1,0 +1,17 @@
+{
+  "category": "stud",
+  "request_action": "screw_points",
+  "timestamp": "2026-09-18 15:23:55.063",
+  "image_file": "stud_20260918-152355063_1726ce94.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ],
+  "points": [
+    [
+      1707.67,
+      997.13
+    ]
+  ]
+}

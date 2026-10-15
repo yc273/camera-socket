@@ -1,0 +1,17 @@
+{
+  "category": "u",
+  "request_action": "u_points",
+  "timestamp": "2026-10-10 16:53:40.325",
+  "image_file": "u_20261010-165340325_c8161312.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ],
+  "points": [
+    [
+      1728.0,
+      1055.2
+    ]
+  ]
+}

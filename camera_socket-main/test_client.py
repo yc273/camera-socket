@@ -45,6 +45,8 @@ COMMANDS = {
     "11": ("model_cross_off", "禁用 cross 模型"),
     "12": ("model_stud_on", "启用 stud 模型"),
     "13": ("model_detect_on", "启用 detect 模型"),
+    # 拍照类
+    "14": ("take_photo", "拍照：保存当前帧到 data/manual/"),
     # 基础
     "0": ("ping", "心跳/连通测试"),
 }

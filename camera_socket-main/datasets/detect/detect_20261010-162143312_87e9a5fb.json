@@ -1,0 +1,12 @@
+{
+  "category": "detect",
+  "request_action": "detect_count",
+  "timestamp": "2026-10-10 16:21:43.312",
+  "image_file": "detect_20261010-162143312_87e9a5fb.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ],
+  "points": 30
+}

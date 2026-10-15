@@ -1,0 +1,15 @@
+{
+  "category": "board",
+  "request_action": "board_position",
+  "timestamp": "2026-10-10 17:08:26.013",
+  "image_file": "board_20261010-170826013_3d57d6ed.jpg",
+  "image_shape": [
+    2048,
+    3072,
+    3
+  ],
+  "points": [
+    1524.0,
+    680.2
+  ]
+}

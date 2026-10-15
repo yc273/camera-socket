@@ -111,6 +111,14 @@ class RealTimePoseDetector:
         self.detection_result_board_angle = None
         self.detection_result_board_position = None
         self.detection_result_detect = None
+        # 最近一帧的性能数据（供界面状态面板显示）
+        self.last_iter_ms = None
+        self.last_model_times = {}
+        # UI 状态面板：点击切换请求队列与切换中标记
+        import queue
+        self._toggle_requests = queue.Queue()
+        self._toggling = set()
+        self._panel_hit_rows = []
         self.running = False  # 初始为 False，避免自动运行
 
         # 检测线程相关
@@ -167,14 +175,26 @@ class RealTimePoseDetector:
         else:
             print("所有模型路径验证通过")
 
-    def _load_model_to_gpu(self, model_path):
-        """将模型从磁盘加载到GPU"""
-        try:
-            model = YOLO(model_path)
+    def _load_model_to_gpu(self, model_path, task):
+        """将模型从磁盘加载到GPU（优先使用与 .pt 指纹匹配的 TensorRT engine 缓存）
 
-            # 预热模型（执行一次推理，确保完全加载到GPU）
-            dummy_input = np.zeros((640, 640, 3), dtype=np.uint8)
-            _ = model.predict(source=dummy_input, imgsz=640, conf=0.5, verbose=False, save=False, show=False)
+        task 必须显式传入（"pose"/"detect"），否则引擎文件会被 ultralytics 按文件名猜任务，
+        slot 这类无关键字的会被误判成 detect，导致关键点解析失效。
+        """
+        try:
+            from engine_utils import valid_engine
+            engine = valid_engine(model_path) if model_path else None
+            if engine:
+                print(f"[TensorRT] 命中引擎缓存: {os.path.basename(engine)}")
+                load_path = engine
+            else:
+                print(f"[TensorRT] 无匹配引擎，按 .pt 加载（如需加速请运行 export_engines.py 编译）")
+                load_path = model_path
+            model = YOLO(load_path, task=task)
+
+            # 预热模型（执行一次推理，确保完全加载到GPU；尺寸与实时检测一致，否则预热无效）
+            dummy_input = np.zeros((720, 1280, 3), dtype=np.uint8)
+            _ = model.predict(source=dummy_input, imgsz=1280, conf=0.5, verbose=False, save=False, show=False)
             return model
         except Exception as e:
             print(f"加载模型失败 {model_path}: {e}")
@@ -206,7 +226,7 @@ class RealTimePoseDetector:
         with self.model_lock:
             if not self.model_stud_loaded:
                 print("正在加载螺钉检测模型...")
-                self.model_stud = self._load_model_to_gpu(self.model_path_stud)
+                self.model_stud = self._load_model_to_gpu(self.model_path_stud, task=MODEL_TASKS["stud"])
                 self.model_stud_loaded = True
                 print(f"螺钉检测模型加载成功: {self.model_path_stud}")
             self.model_stud_switch = True
@@ -230,7 +250,7 @@ class RealTimePoseDetector:
         with self.model_lock:
             if not self.model_cross_loaded:
                 print("正在加载十字交叉点检测模型...")
-                self.model_cross = self._load_model_to_gpu(self.model_path_cross)
+                self.model_cross = self._load_model_to_gpu(self.model_path_cross, task=MODEL_TASKS["cross"])
                 self.model_cross_loaded = True
                 print(f"十字交叉点检测模型加载成功: {self.model_path_cross}")
             self.model_cross_switch = True
@@ -262,7 +282,7 @@ class RealTimePoseDetector:
         with self.model_lock:
             if not self.model_cross_loaded:
                 print("正在加载装板检测模型...")
-                self.model_cross = self._load_model_to_gpu(self.model_path_cross)
+                self.model_cross = self._load_model_to_gpu(self.model_path_cross, task=MODEL_TASKS["cross"])
                 self.model_cross_loaded = True
                 print(f"装板检测模型加载成功: {self.model_path_cross}")
             self.model_board_switch = True
@@ -294,7 +314,7 @@ class RealTimePoseDetector:
         with self.model_lock:
             if not self.model_u_loaded:
                 print("正在加载U型件检测模型...")
-                self.model_u = self._load_model_to_gpu(self.model_path_u)
+                self.model_u = self._load_model_to_gpu(self.model_path_u, task=MODEL_TASKS["u"])
                 self.model_u_loaded = True
                 print(f"U型件检测模型加载成功: {self.model_path_u}")
             self.model_u_switch = True
@@ -318,7 +338,7 @@ class RealTimePoseDetector:
         with self.model_lock:
             if not self.model_slot_loaded:
                 print("正在加载十字接缝检测模型...")
-                self.model_slot = self._load_model_to_gpu(self.model_path_slot)
+                self.model_slot = self._load_model_to_gpu(self.model_path_slot, task=MODEL_TASKS["slot"])
                 self.model_slot_loaded = True
                 print(f"十字接缝检测模型加载成功: {self.model_path_slot}")
             self.model_slot_switch = True
@@ -343,7 +363,7 @@ class RealTimePoseDetector:
         with self.model_lock:
             if not self.model_detect_loaded:
                 print("正在加载螺钉反馈检测模型...")
-                self.model_detect = self._load_model_to_gpu(self.model_path_detect)
+                self.model_detect = self._load_model_to_gpu(self.model_path_detect, task=MODEL_TASKS["detect"])
                 self.model_detect_loaded = True
                 print(f"螺钉反馈检测模型加载成功: {self.model_path_detect}")
             self.model_detect_switch = True
@@ -657,6 +677,8 @@ class RealTimePoseDetector:
 
                 # 性能汇总：每5秒打印一次各启用模型的单帧推理耗时
                 now = time.perf_counter()
+                self.last_iter_ms = (now - iter_start) * 1000
+                self.last_model_times = dict(model_times)
                 if now - last_timing_print >= 5.0:
                     last_timing_print = now
                     detail = " | ".join(f"{k}: {v:.0f}ms" for k, v in model_times.items()) or "无模型启用"
@@ -859,6 +881,93 @@ class RealTimePoseDetector:
 
         return frame
 
+    @staticmethod
+    def _panel_rows():
+        """状态面板的行定义：(显示名, 开关属性, 耗时键, 启用/禁用方法名)"""
+        return [
+            ("stud", "model_stud_switch", "stud", "stud"),
+            ("cross", "model_cross_switch", "cross/board", "cross"),
+            ("board", "model_board_switch", "cross/board", "board"),
+            ("u", "model_u_switch", "u", "u"),
+            ("slot", "model_slot_switch", "slot", "slot"),
+            ("detect", "model_detect_switch", "detect", "detect"),
+        ]
+
+    def _panel_layout(self, w):
+        """面板几何（绘制与鼠标点击命中共用同一份）"""
+        k = 1.0 if w >= 2000 else 0.6   # 相机全分辨率帧用大字号，断连预览帧用小字号
+        rows = self._panel_rows()
+        line_h, pad = int(30 * k), int(12 * k)
+        panel_w = int(330 * k)
+        panel_h = line_h * (len(rows) + 2) + pad * 2
+        x0, y0 = w - panel_w - int(10 * k), int(10 * k)
+        return k, line_h, pad, panel_w, panel_h, x0, y0, rows
+
+    def _draw_model_status_panel(self, frame):
+        """在画面右上角绘制模型状态面板：每行是可点击的开关按钮（ON绿/OFF灰，切换中显示...）"""
+        times = self.last_model_times if self.last_model_times else {}
+        h, w = frame.shape[:2]
+        k, line_h, pad, panel_w, panel_h, x0, y0, rows = self._panel_layout(w)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        # 面板底色（实心黑，避免每帧做半透明混合的开销）
+        cv2.rectangle(frame, (x0, y0), (x0 + panel_w, y0 + panel_h), (30, 30, 30), -1)
+        cv2.rectangle(frame, (x0, y0), (x0 + panel_w, y0 + panel_h), (200, 200, 200), 1)
+
+        cv2.putText(frame, "Model Status (click)", (x0 + pad, y0 + line_h),
+                    font, 0.7 * k, (0, 255, 255), max(1, int(2 * k)), cv2.LINE_AA)
+        y = y0 + line_h * 2
+        hit_rows = []
+        for name, attr, tkey, _method in rows:
+            on = getattr(self, attr)
+            toggling = name in self._toggling
+            if toggling:
+                color, state, t_str = (0, 255, 255), "...", "..."
+            else:
+                color = (0, 255, 0) if on else (150, 150, 150)
+                state = "ON " if on else "OFF"
+                t = times.get(tkey)
+                t_str = f"{t:.0f}ms" if (on and t is not None) else "--"
+            cv2.putText(frame, f"{name:<7}{state}", (x0 + pad, y + line_h),
+                        font, 0.65 * k, color, max(1, int(2 * k)), cv2.LINE_AA)
+            cv2.putText(frame, t_str, (x0 + panel_w - pad - int(90 * k), y + line_h),
+                        font, 0.65 * k, color, max(1, int(2 * k)), cv2.LINE_AA)
+            hit_rows.append((name, (x0, y, x0 + panel_w, y + line_h)))
+            y += line_h
+        self._panel_hit_rows = hit_rows  # 供鼠标回调命中判断
+        total = self.last_iter_ms
+        cv2.putText(frame, f"total  {total:.0f}ms" if total else "total    --",
+                    (x0 + pad, y + line_h), font, 0.65 * k,
+                    (255, 255, 255), max(1, int(2 * k)), cv2.LINE_AA)
+
+    def _on_mouse(self, event, x, y, flags, param):
+        """点击状态面板某一行 → 请求切换对应模型（后台线程执行，避免卡界面）"""
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        for name, (rx0, ry0, rx1, ry1) in getattr(self, "_panel_hit_rows", []):
+            if rx0 <= x <= rx1 and ry0 <= y <= ry1:
+                if name not in self._toggling:
+                    self._toggle_requests.put(name)
+                break
+
+    def _toggle_worker(self):
+        """逐个执行 UI 发起的模型开关请求（enable/disable 内部有 model_lock，本身串行）"""
+        while True:
+            name = self._toggle_requests.get()
+            try:
+                self._toggling.add(name)
+                on = getattr(self, f"model_{name}_switch")
+                print(f"[UI] 点击切换 {name}: {'OFF->ON' if not on else 'ON->OFF'}")
+                if on:
+                    getattr(self, f"disable_model_{name}")()
+                else:
+                    getattr(self, f"enable_model_{name}")()
+                print(f"[UI] {name} 切换完成")
+            except Exception as e:
+                print(f"[UI] 切换 {name} 出错: {e}")
+            finally:
+                self._toggling.discard(name)
+
     def _create_disconnected_preview(self):
         """相机未连接时窗口显示的提示帧（含时间戳），避免窗口空白/卡死"""
         height, width = 720, 1280
@@ -908,6 +1017,11 @@ class RealTimePoseDetector:
             print(f"⚠️ 无图形界面环境，跳过窗口显示（socket 服务不受影响）: {e}")
             headless = True
 
+        if not headless:
+            # 状态面板点击开关：鼠标回调 + 后台执行线程（模型加载 1~3 秒，不能卡主线程）
+            cv2.setMouseCallback(window_name, self._on_mouse)
+            Thread(target=self._toggle_worker, daemon=True).start()
+
         print("实时模型检测已启动，按 'q' 或 'ESC' 退出...")
         print("显示和检测已分离，帧率已提升")
         print("相机断连自动重连已启用")
@@ -942,6 +1056,8 @@ class RealTimePoseDetector:
                     # 无帧时显示相机未连接提示（保证窗口有内容、不冻结）
                     if display_frame is None:
                         display_frame = self._create_disconnected_preview()
+                    # 右上角模型状态面板（开关状态 + 实时推理耗时）
+                    self._draw_model_status_panel(display_frame)
                     cv2.imshow(window_name, display_frame)
                     key = cv2.waitKey(1) & 0xFF  # 每轮必须调用，pump GUI 事件保持窗口响应
                     if key in [ord('q'), ord('Q'), 27]:
@@ -1020,13 +1136,13 @@ def _find_dir(name):
             return candidate
     return os.path.normpath(os.path.join(_SCRIPT_DIR, os.pardir, name))  # 兜底路径，缺失时由校验逻辑告警
 
-# 模型统一放在 <项目根目录>/model/
-MODEL_DIR = _find_dir("model")
-MODEL_PATH_STUD = os.path.join(MODEL_DIR, "yolo11l-pose-stud-1280-16.pt")
-MODEL_PATH_CROSS = os.path.join(MODEL_DIR, "yolo11x-pose-cross-1280-10.pt")
-MODEL_PATH_U = os.path.join(MODEL_DIR, "yolo11l-pose-hexstud-1280-4.pt")
-MODEL_PATH_SLOT = os.path.join(MODEL_DIR, "slot-1280-2.pt")
-MODEL_PATH_DETECT = os.path.join(MODEL_DIR, "yolo11x-detect-stud-1280-16.pt")
+# 模型路径统一定义在 model_config.py（export_engines.py 编译脚本共用这一份配置）
+from model_config import MODEL_PATHS, MODEL_TASKS
+MODEL_PATH_STUD = MODEL_PATHS["stud"]
+MODEL_PATH_CROSS = MODEL_PATHS["cross"]
+MODEL_PATH_U = MODEL_PATHS["u"]
+MODEL_PATH_SLOT = MODEL_PATHS["slot"]
+MODEL_PATH_DETECT = MODEL_PATHS["detect"]
 SAVE_FRAME_PATH = os.path.join(_find_dir("data"), "frame.jpg")
 # DETECT_CONF = 0.05
 

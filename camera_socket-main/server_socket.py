@@ -200,6 +200,25 @@ class VisionAPISocketServer:
                     'file': saved_path
                 })
 
+            elif req in ('take_photo', 'take photo'):
+                """收到拍照指令：把当前相机帧保存到 data/manual/（命名与界面手动保存一致）"""
+                from realtime_test_origin import get_shared_frame, _find_dir
+                frame = get_shared_frame()
+                if frame is None:
+                    return self.clean_for_utf8({
+                        'success': False,
+                        'error': 'No frame available'
+                    })
+                save_dir = os.path.join(_find_dir('data'), 'manual')
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = os.path.join(save_dir, f"manual_{int(time.time() * 1000)}.jpg")
+                cv2.imwrite(save_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 40])
+                print(f'take_photo saved: {save_path}')
+                return self.clean_for_utf8({
+                    'success': True,
+                    'file': save_path
+                })
+
             elif req == 'cross_points_without_granding':
                 detect_result = detector.get_result()
                 position_pixels = detect_result['cross']

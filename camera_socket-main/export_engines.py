@@ -23,7 +23,7 @@ import socket
 import sys
 import time
 
-from model_config import MODEL_PATHS, MODEL_TASKS
+from model_config import MODEL_PATHS, MODEL_TASKS, MODEL_EXPORT_IMGSZ, DEFAULT_EXPORT_IMGSZ
 import engine_utils
 
 HOST, PORT = "127.0.0.1", 65432
@@ -120,7 +120,8 @@ def main():
     for name in need_export:
         pt = MODEL_PATHS[name]
         try:
-            engine_utils.export_engine(pt, task=MODEL_TASKS[name])
+            engine_utils.export_engine(pt, task=MODEL_TASKS[name],
+                                       imgsz=MODEL_EXPORT_IMGSZ.get(name, DEFAULT_EXPORT_IMGSZ))
             reloaded.extend(SHARED.get(name, [name]))
         except KeyboardInterrupt:
             print("\n用户中断，已编译的缓存保留。")

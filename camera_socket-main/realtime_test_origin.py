@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
+import sys
 from camera import Camera  # 导入相机类
+from regions import load_screw_regions, crop_screw_regions
 from ultralytics import YOLO
 import os
 from threading import Lock, Thread, Event
@@ -52,7 +54,7 @@ class RealTimePoseDetector:
                     cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, camera_index=0, model_path_stud=None, model_path_cross=None,model_path_u=None, model_path_slot=None, model_path_detect=None, save_frame_path="data/frame.jpg"):
+    def __init__(self, camera_index=0, model_path_stud=None, model_path_cross=None,model_path_u=None, model_path_slot=None, model_path_detect=None, save_frame_path="data/frame.jpg", regions_scheme=0):
         """防止重复初始化"""
         if hasattr(self, '_initialized') and self._initialized:
             return
@@ -137,6 +139,10 @@ class RealTimePoseDetector:
         # 验证模型路径是否存在
         self._validate_model_paths()
 
+        # 加载螺钉检测区域表（stud_detect_regions.json 指定方案）。
+        # 加载失败时螺钉检测直接不跑（不做整图兜底：detect 权重是裁剪小图训练的 256 模型，跑整图必然大量误检漏检）
+        self.screw_regions = load_screw_regions(scheme=regions_scheme)
+
         self._initialized = True  # 标记已初始化
         print("检测器初始化完成（启动时加载所有可用模型）")
         # 初始化开启所有模型：路径存在才加载，缺失的告警跳过
@@ -175,11 +181,13 @@ class RealTimePoseDetector:
         else:
             print("所有模型路径验证通过")
 
-    def _load_model_to_gpu(self, model_path, task):
+    def _load_model_to_gpu(self, model_path, task, warmup_imgsz=1280):
         """将模型从磁盘加载到GPU（优先使用与 .pt 指纹匹配的 TensorRT engine 缓存）
 
         task 必须显式传入（"pose"/"detect"），否则引擎文件会被 ultralytics 按文件名猜任务，
         slot 这类无关键字的会被误判成 detect，导致关键点解析失效。
+        warmup_imgsz 必须与实时检测的 predict imgsz 一致（detect 为区域裁剪小图模型，按 256 预热），
+        否则预热无效，静态 shape 的 engine 甚至会直接报错。
         """
         try:
             from engine_utils import valid_engine
@@ -194,7 +202,7 @@ class RealTimePoseDetector:
 
             # 预热模型（执行一次推理，确保完全加载到GPU；尺寸与实时检测一致，否则预热无效）
             dummy_input = np.zeros((720, 1280, 3), dtype=np.uint8)
-            _ = model.predict(source=dummy_input, imgsz=1280, conf=0.5, verbose=False, save=False, show=False)
+            _ = model.predict(source=dummy_input, imgsz=warmup_imgsz, conf=0.5, verbose=False, save=False, show=False)
             return model
         except Exception as e:
             print(f"加载模型失败 {model_path}: {e}")
@@ -363,7 +371,9 @@ class RealTimePoseDetector:
         with self.model_lock:
             if not self.model_detect_loaded:
                 print("正在加载螺钉反馈检测模型...")
-                self.model_detect = self._load_model_to_gpu(self.model_path_detect, task=MODEL_TASKS["detect"])
+                # 预热尺寸与区域裁剪推理一致（区域表 imgsz，当前 256）
+                warmup_imgsz = self.screw_regions['imgsz'] if self.screw_regions else 256
+                self.model_detect = self._load_model_to_gpu(self.model_path_detect, task=MODEL_TASKS["detect"], warmup_imgsz=warmup_imgsz)
                 self.model_detect_loaded = True
                 print(f"螺钉反馈检测模型加载成功: {self.model_path_detect}")
             self.model_detect_switch = True
@@ -650,18 +660,11 @@ class RealTimePoseDetector:
                     detection_info_slot = self.calculate_slot_position(detection_info_slot_origin)#计算十字接缝位置（使用所有点的几何中心）
                     model_times['slot'] = (time.perf_counter() - t_model) * 1000
 
-                if self.model_detect_switch:
+                # 螺钉检测（单钉单拍）：按区域表裁剪固定小区域推理，每区域最多取 1 钉；
+                # 区域表加载失败时直接不检测（不做整图兜底，启动阶段已有告警）
+                if self.model_detect_switch and self.screw_regions is not None:
                     t_model = time.perf_counter()
-                    results_detect = self.model_detect.predict(
-                        source=intensive_frame,
-                        imgsz=1280,
-                        conf=0.25,
-                        save=False,
-                        show=False,
-                        verbose=False,
-                        stream=True
-                    )
-                    detection_info_detect = self._parse_detection_results_box(results_detect, self.model_detect)
+                    detection_info_detect = self._detect_screws_by_regions(intensive_frame)
                     model_times['detect'] = (time.perf_counter() - t_model) * 1000
 
                 # 更新检测结果（使用锁保证线程安全）
@@ -689,6 +692,35 @@ class RealTimePoseDetector:
                 time.sleep(0.1)
 
         print("检测线程已停止")
+
+    def _detect_screws_by_regions(self, frame):
+        """按区域表裁剪小图逐区域检测螺钉，每个区域最多取1个钉，返回整图坐标框列表"""
+        crops_with_info = crop_screw_regions(frame, self.screw_regions)
+        if not crops_with_info:
+            return []
+        # 所有裁剪小图组成列表一次批量推理（当前生产方案只有 1 个区域；
+        # 若启用多区域方案且 detect 用了静态 batch=1 的 TensorRT engine，需改回逐区域推理）
+        crops = [item[1] for item in crops_with_info]
+        results_list = self.model_detect.predict(
+            source=crops,
+            imgsz=self.screw_regions['imgsz'],
+            conf=self.screw_regions['conf_threshold'],
+            save=False,
+            show=False,
+            verbose=False
+        )
+        screw_boxes = []
+        for (region, crop, offset_x, offset_y), result in zip(crops_with_info, results_list):
+            if result.boxes is None or len(result.boxes) == 0:
+                continue
+            # 每个区域只取置信度最高的1个框，并把小图坐标还原回整图坐标
+            best_box = max(result.boxes, key=lambda box: float(box.conf[0]))
+            x1, y1, x2, y2 = best_box.xyxy[0].tolist()
+            screw_boxes.append([
+                round(x1 + offset_x, 2), round(y1 + offset_y, 2),
+                round(x2 + offset_x, 2), round(y2 + offset_y, 2)
+            ])
+        return screw_boxes
 
     def calculate_slot_position(self, slot_points):
         """计算十字接缝位置（使用所有点的几何中心）"""
@@ -1146,7 +1178,19 @@ MODEL_PATH_DETECT = MODEL_PATHS["detect"]
 SAVE_FRAME_PATH = os.path.join(_find_dir("data"), "frame.jpg")
 # DETECT_CONF = 0.05
 
+def parse_scheme_from_argv():
+    """从命令行参数解析区域表方案号：--scheme N（可选，默认 0）"""
+    for i, arg in enumerate(sys.argv):
+        if arg == '--scheme' and i + 1 < len(sys.argv):
+            try:
+                return int(sys.argv[i + 1])
+            except ValueError:
+                print(f"警告：--scheme 参数 '{sys.argv[i + 1]}' 不是整数，使用默认方案 0")
+            break
+    return 0
+
 # 创建全局唯一实例（关键：确保所有地方导入的是同一个）
+# 区域表方案号由启动命令可选指定：python server_socket.py --scheme N（默认方案 0 = 单钉单区域生产方案）
 detector = RealTimePoseDetector(
     camera_index=CAMERA_INDEX,
     model_path_stud=MODEL_PATH_STUD,
@@ -1154,7 +1198,8 @@ detector = RealTimePoseDetector(
     model_path_u=MODEL_PATH_U,
     model_path_slot=MODEL_PATH_SLOT,
     model_path_detect=MODEL_PATH_DETECT,
-    save_frame_path=SAVE_FRAME_PATH
+    save_frame_path=SAVE_FRAME_PATH,
+    regions_scheme=parse_scheme_from_argv()
 )
 
 if __name__ == "__main__":

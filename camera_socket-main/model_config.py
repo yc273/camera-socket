@@ -34,7 +34,7 @@ MODEL_PATHS = {
 }
 
 # 逻辑名 → 任务类型。加载模型/引擎时必须显式指定，否则 ultralytics 按文件名猜测：
-# slot 的文件名没有 pose/detect 关键字，会被误判为 detect，导致关键点解析失效。
+# slot 的文件名没有 pose/detect 关键字，会被误判成 detect，导致关键点解析失效。
 MODEL_TASKS = {
     "stud": "pose",
     "cross": "pose",
@@ -42,4 +42,12 @@ MODEL_TASKS = {
     "u": "pose",
     "slot": "pose",
     "detect": "detect",
+}
+
+# 各模型 TensorRT engine 导出尺寸，未列出的用 DEFAULT_EXPORT_IMGSZ。
+# detect 是区域裁剪小图模型（stud_detect_regions.json 的 imgsz=256），
+# engine 必须按推理同一尺寸导出，否则静态 shape 与 predict(imgsz=256) 不匹配会报错。
+DEFAULT_EXPORT_IMGSZ = 1280
+MODEL_EXPORT_IMGSZ = {
+    "detect": 256,
 }

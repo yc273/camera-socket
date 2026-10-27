@@ -1,0 +1,20 @@
+{
+  "schemes": {
+    "0": {
+      "margin": 0,
+      "conf_threshold": 0.5,
+      "imgsz": 256,
+      "regions": [
+        {
+          "id": 1,
+          "box": [
+            972,
+            451,
+            1258,
+            730
+          ]
+        }
+      ]
+    }
+  }
+}

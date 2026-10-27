@@ -10,7 +10,9 @@ import hashlib
 import os
 import time
 
-# 导出参数：与实时检测的 predict(imgsz=1280) 保持一致；half=True 用 FP16（Jetson Tensor Core 硬件加速）
+# 导出参数：half=True 用 FP16（Jetson Tensor Core 硬件加速）。
+# imgsz 按模型区分：默认 1280（与整图模型的 predict 一致）；detect 为区域裁剪小图模型，
+# 必须按 256 导出（见 model_config.MODEL_EXPORT_IMGSZ，export_engines.py 传入）。
 EXPORT_IMGSZ = 1280
 EXPORT_HALF = True
 
@@ -42,17 +44,22 @@ def valid_engine(pt_path):
     return engine if os.path.isfile(engine) else None
 
 
-def export_engine(pt_path, task, device=0):
-    """把 .pt 编译为 TensorRT engine（首次编译较慢，x 型号可能 5~15 分钟），返回 engine 路径"""
+def export_engine(pt_path, task, device=0, imgsz=None):
+    """把 .pt 编译为 TensorRT engine（首次编译较慢，x 型号可能 5~15 分钟），返回 engine 路径
+
+    imgsz 不传时用默认 EXPORT_IMGSZ（1280）；裁剪小图模型必须传推理同款尺寸（如 detect=256）。
+    """
     from ultralytics import YOLO  # 延迟导入：脚本启动时不必拉起 torch
 
+    if imgsz is None:
+        imgsz = EXPORT_IMGSZ
     print(f"[导出] 开始编译 TensorRT engine: {pt_path} (task={task})", flush=True)
-    print(f"[导出] imgsz={EXPORT_IMGSZ} half={EXPORT_HALF}（首次编译耗时较长，请耐心等待）", flush=True)
+    print(f"[导出] imgsz={imgsz} half={EXPORT_HALF}（首次编译耗时较长，请耐心等待）", flush=True)
     t0 = time.time()
     model = YOLO(pt_path, task=task)
     out = model.export(
         format="engine",
-        imgsz=EXPORT_IMGSZ,
+        imgsz=imgsz,
         half=EXPORT_HALF,
         device=device,
         batch=1,

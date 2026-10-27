@@ -40,3 +40,11 @@ Thumbs.db
 # 临时文件
 *.tmp
 app.log
+
+# label_tool / 检测验证的工作数据（数据集与产物不入库）
+label_tool/all/
+label_tool/new_all/
+label_tool/all_removed/
+label_tool/*.tar.gz
+label_tool/region_fit_overview.jpg
+test_result/

@@ -5,6 +5,7 @@ from camera import Camera  # 导入相机类
 from regions import load_screw_regions, crop_screw_regions
 from ultralytics import YOLO
 import os
+import json
 from threading import Lock, Thread, Event
 import time
 import random
@@ -54,7 +55,7 @@ class RealTimePoseDetector:
                     cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, camera_index=0, model_path_stud=None, model_path_cross=None,model_path_u=None, model_path_slot=None, model_path_detect=None, save_frame_path="data/frame.jpg", regions_scheme=0):
+    def __init__(self, camera_index=0, model_path_stud=None, model_path_cross=None,model_path_u=None, model_path_slot=None, model_path_detect=None, save_frame_path="data/frame.jpg", regions_scheme=0, camera_ips=None, area=None):
         """防止重复初始化"""
         if hasattr(self, '_initialized') and self._initialized:
             return
@@ -63,7 +64,9 @@ class RealTimePoseDetector:
 
         # 初始化核心属性
         self.camera_index = camera_index
-        self.camera = Camera(device_index=camera_index)
+        self.camera_ips = camera_ips  # 本区域相机 IP 列表（None 时按 index 连接，兼容 USB 相机）
+        self.area = area  # 区域号（None 表示未分区域的单进程模式）
+        self.camera = Camera(device_index=camera_index, ip_list=camera_ips)
         self.camera_connected = False
 
         # 模型路径配置（保存路径以便动态加载）
@@ -508,7 +511,7 @@ class RealTimePoseDetector:
         time.sleep(0.5)
 
         # 重新创建相机对象
-        self.camera = Camera(device_index=self.camera_index)
+        self.camera = Camera(device_index=self.camera_index, ip_list=self.camera_ips)
 
         # 尝试连接
         if self.camera.connect():
@@ -1022,8 +1025,18 @@ class RealTimePoseDetector:
                     font, 0.8, (128, 128, 128), 2, cv2.LINE_AA)
         return frame
 
-    def run(self, window_name="Real-Time Dual Model Detection"):
+    def run(self, window_name=None):
         """启动检测主循环"""
+
+        # 窗口标题带上区域号（纯 ASCII，OpenCV Qt 后端不支持中文窗口名）
+        # 名称取 areas.json 的 name 并去掉非 ASCII（如 "135度" -> "135"）
+        if self.area and isinstance(AREA_CONFIG, dict) and AREA_CONFIG.get("name"):
+            name_ascii = "".join(c for c in str(AREA_CONFIG["name"]) if ord(c) < 128)
+            area_tag = f"AREA-{self.area}-{name_ascii}" if name_ascii else f"AREA-{self.area}"
+        else:
+            area_tag = f"AREA-{self.area}" if self.area else "NO-AREA"
+        if window_name is None:
+            window_name = f"[{area_tag}] Real-Time Dual Model Detection"
 
         # 初始化最后帧时间（即使没有相机也设置）
         if self.last_frame_time == 0:
@@ -1044,7 +1057,9 @@ class RealTimePoseDetector:
         try:
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
             cv2.resizeWindow(window_name, 1280, 720)
-            cv2.moveWindow(window_name, 100, 100)
+            # 按区域号错开窗口位置，避免多窗口重叠
+            offset = ((int(self.area) if self.area else 0) - 1) * 60
+            cv2.moveWindow(window_name, 100 + offset, 100 + offset)
         except cv2.error as e:
             print(f"⚠️ 无图形界面环境，跳过窗口显示（socket 服务不受影响）: {e}")
             headless = True
@@ -1090,6 +1105,9 @@ class RealTimePoseDetector:
                         display_frame = self._create_disconnected_preview()
                     # 右上角模型状态面板（开关状态 + 实时推理耗时）
                     self._draw_model_status_panel(display_frame)
+                    # 左上角区域角标（多窗口时区分来源）
+                    cv2.rectangle(display_frame, (0, 0), (10 + 22 * (len(area_tag) + 2), 52), (0, 0, 0), -1)
+                    cv2.putText(display_frame, area_tag, (12, 38), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2, cv2.LINE_AA)
                     cv2.imshow(window_name, display_frame)
                     key = cv2.waitKey(1) & 0xFF  # 每轮必须调用，pump GUI 事件保持窗口响应
                     if key in [ord('q'), ord('Q'), 27]:
@@ -1187,10 +1205,53 @@ def parse_scheme_from_argv():
             except ValueError:
                 print(f"警告：--scheme 参数 '{sys.argv[i + 1]}' 不是整数，使用默认方案 0")
             break
-    return 0
+    return None  # 未指定时交给区域配置决定
+
+def parse_area_from_argv():
+    """从命令行参数解析区域号：--area N（可选，默认 None = 单进程不分区域）"""
+    for i, arg in enumerate(sys.argv):
+        if arg == '--area' and i + 1 < len(sys.argv):
+            try:
+                return str(int(sys.argv[i + 1]))
+            except ValueError:
+                print(f"警告：--area 参数 '{sys.argv[i + 1]}' 不是整数，忽略")
+                break
+    return None
+
+def load_area_config():
+    """加载 areas.json 中本区域（--area N）的配置，返回 (area, config)。
+
+    未指定 --area 或配置缺失时返回 (None, None)，退回单进程不分区域的行为。
+    """
+    area = parse_area_from_argv()
+    if area is None:
+        return None, None
+    config_path = os.path.join(_SCRIPT_DIR, "areas.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            areas = json.load(f)
+    except Exception as e:
+        print(f"⚠️ 加载区域配置失败（退回单进程模式）: {config_path} -> {e}")
+        return None, None
+    if area not in areas:
+        print(f"⚠️ areas.json 中不存在区域 {area}，可用区域: {list(areas.keys())}（退回单进程模式）")
+        return None, None
+    return area, areas[area]
+
+# 本进程区域配置（--area N 时生效）
+AREA, AREA_CONFIG = load_area_config()
+if AREA_CONFIG:
+    SAVE_FRAME_PATH = os.path.join(_find_dir("data"), AREA_CONFIG.get("data_dir", f"area{AREA}"), "frame.jpg")
+    os.makedirs(os.path.dirname(SAVE_FRAME_PATH), exist_ok=True)
+
+# 区域表方案号优先级：--scheme 显式指定 > areas.json 中该区域的 scheme > 0
+REGION_SCHEME = parse_scheme_from_argv()
+if REGION_SCHEME is None:
+    REGION_SCHEME = AREA_CONFIG.get("scheme", 0) if AREA_CONFIG else 0
 
 # 创建全局唯一实例（关键：确保所有地方导入的是同一个）
-# 区域表方案号由启动命令可选指定：python server_socket.py --scheme N（默认方案 0 = 单钉单区域生产方案）
+# 单进程：python server_socket.py [--scheme N]
+# 多区域：python server_socket.py --area N（相机 IP 列表/数据目录/端口由 areas.json 决定）
 detector = RealTimePoseDetector(
     camera_index=CAMERA_INDEX,
     model_path_stud=MODEL_PATH_STUD,
@@ -1199,7 +1260,9 @@ detector = RealTimePoseDetector(
     model_path_slot=MODEL_PATH_SLOT,
     model_path_detect=MODEL_PATH_DETECT,
     save_frame_path=SAVE_FRAME_PATH,
-    regions_scheme=parse_scheme_from_argv()
+    regions_scheme=REGION_SCHEME,
+    camera_ips=AREA_CONFIG.get("ips") if AREA_CONFIG else None,
+    area=AREA,
 )
 
 if __name__ == "__main__":

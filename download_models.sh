@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
-# 从 GitHub Release 下载全部模型权重到 model/
+# 从 GitHub Release 下载当前使用的模型权重到 model/
+# 模型清单与 camera_socket-main/model_config.py 的 MODEL_PATHS 保持一致
 set -e
 cd "$(dirname "$0")"
 REPO="yc273/camera-socket"
-TAG="v1.0"
+TAG="v2.0"
 mkdir -p model
 MODELS=(
-  detect-1280-8.pt
-  slot-1280-2.pt
-  stud-best-1280-15.pt
-  u-l-1280-3.pt
-  yolo11-cross-x-1280-8.pt
-  yolo11-cross-x-1280-9.pt
-  yolo11l-pose-hexstud-1280-4.pt
   yolo11l-pose-stud-1280-16.pt
-  yolo11x-detect-1280-12.pt
-  yolo11x-detect-1280-14.pt
-  yolo11x-detect-stud-1280-16.pt
-  yolo11x-pose-cross-1280-10.pt
+  yolo11x-pose-cross-1280-11.pt
+  yolo11l-pose-hexstud-1280-6.pt
+  slot-1280-2.pt
+  yolo26x-detect-stud-256-3.pt
 )
 for m in "${MODELS[@]}"; do
   if [ -f "model/$m" ]; then

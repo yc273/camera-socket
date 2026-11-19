@@ -9,7 +9,7 @@ import cv2
 import logging
 import sys
 import os
-from realtime_test_origin import detector, RealTimePoseDetector
+from realtime_test_origin import detector, RealTimePoseDetector, AREA, AREA_CONFIG
 from dataset_saver import saver
 
 
@@ -108,6 +108,8 @@ class VisionAPISocketServer:
                 process_end_time = time.time()
 
                 if resp is not None:
+                    if isinstance(resp, dict) and AREA is not None:
+                        resp['area'] = AREA  # 标记数据来源区域
                     self.send_response(conn, resp, receive_time,
                                       send_time=time.time(),
                                       process_time=process_end_time - process_start_time)
@@ -209,7 +211,9 @@ class VisionAPISocketServer:
                         'success': False,
                         'error': 'No frame available'
                     })
-                save_dir = os.path.join(_find_dir('data'), 'manual')
+                # 分区域模式下落到 data/<data_dir>/manual/，避免多进程互写
+                manual_sub = os.path.join(AREA_CONFIG.get('data_dir', f'area{AREA}'), 'manual') if AREA_CONFIG else 'manual'
+                save_dir = os.path.join(_find_dir('data'), manual_sub)
                 os.makedirs(save_dir, exist_ok=True)
                 save_path = os.path.join(save_dir, f"manual_{int(time.time() * 1000)}.jpg")
                 cv2.imwrite(save_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 40])
@@ -392,5 +396,9 @@ class VisionAPISocketServer:
 
 if __name__ == '__main__':
     # 启动Socket服务端（会自动启动检测器）
-    server = VisionAPISocketServer()
+    # 端口：--area N 时取 areas.json 中该区域端口，否则默认 65432
+    port = AREA_CONFIG.get('port', 65432) if AREA_CONFIG else 65432
+    if AREA is not None:
+        print(f'区域 {AREA} 模式：相机 IP 列表={AREA_CONFIG.get("ips")}, 数据目录={AREA_CONFIG.get("data_dir")}, 端口={port}')
+    server = VisionAPISocketServer(port=port)
     server.start()

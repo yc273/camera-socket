@@ -27,10 +27,10 @@ MODEL_DIR = _find_dir("model")
 # 逻辑名 → 权重路径。board 与 cross 共用同一权重，不单列。
 MODEL_PATHS = {
     "stud":   os.path.join(MODEL_DIR, "yolo11l-pose-stud-1280-16.pt"),
-    "cross":  os.path.join(MODEL_DIR, "yolo11x-pose-cross-1280-10.pt"),
-    "u":      os.path.join(MODEL_DIR, "yolo11l-pose-hexstud-1280-4.pt"),
+    "cross":  os.path.join(MODEL_DIR, "yolo11x-pose-cross-1280-11.pt"),
+    "u":      os.path.join(MODEL_DIR, "yolo11l-pose-hexstud-1280-6.pt"),
     "slot":   os.path.join(MODEL_DIR, "slot-1280-2.pt"),
-    "detect": os.path.join(MODEL_DIR, "yolo26x-detect-stud-256-2.pt"),
+    "detect": os.path.join(MODEL_DIR, "yolo26x-detect-stud-256-3.pt"),
 }
 
 # 逻辑名 → 任务类型。加载模型/引擎时必须显式指定，否则 ultralytics 按文件名猜测：

@@ -4,9 +4,15 @@ from ctypes import *
 from threading import Thread, Event
 from MvCameraControl_class import *
 
+def _gige_ip_to_str(nCurrentIp):
+    """GigE 设备 nCurrentIp（c_uint，大端存储）转点分字符串"""
+    return "%d.%d.%d.%d" % ((nCurrentIp >> 24) & 0xFF, (nCurrentIp >> 16) & 0xFF,
+                            (nCurrentIp >> 8) & 0xFF, nCurrentIp & 0xFF)
+
 class Camera:
-    def __init__(self, device_index=0):
+    def __init__(self, device_index=0, ip_list=None):
         self.device_index = device_index
+        self.ip_list = ip_list  # 本区域的相机 IP 列表，如 ["192.168.3.11", ...]；None 时按 index 连接（兼容 USB）
         self.cam = None
         self.running = Event()  # 控制视频流线程
         self.frame = None       # 存储最新帧
@@ -16,8 +22,27 @@ class Camera:
         device_list = self.enum_devices()
         if not device_list:
             return False
-        self.cam = self.create_camera_handle(device_list, self.device_index)
+        if self.ip_list:
+            index = self._find_device_by_ips(device_list, self.ip_list)
+            if index is None:
+                print("IP 列表 %s 中未发现在线相机！" % self.ip_list)
+                return False
+        else:
+            index = self.device_index
+        self.cam = self.create_camera_handle(device_list, index)
         return self.cam is not None
+
+    def _find_device_by_ips(self, device_list, ip_list):
+        """返回第一台 IP 在列表内的在线 GigE 设备下标，无匹配返回 None"""
+        ip_set = set(ip_list)
+        for i in range(device_list.nDeviceNum):
+            dev_info = cast(device_list.pDeviceInfo[i], POINTER(MV_CC_DEVICE_INFO)).contents
+            if dev_info.nTLayerType == MV_GIGE_DEVICE:
+                ip_str = _gige_ip_to_str(dev_info.SpecialInfo.stGigEInfo.nCurrentIp)
+                if ip_str in ip_set:
+                    print("连接区域相机: %s" % ip_str)
+                    return i
+        return None
 
     def enum_devices(self):
         """枚举设备"""
@@ -65,6 +90,17 @@ class Camera:
             print("自动增益已成功开启！")
         else:
             print(f"开启自动增益失败！ret[0x%x]" % ret_gain)
+
+        # 固定采集帧率为 6 帧/秒
+        ret_en = cam.MV_CC_SetBoolValue("AcquisitionFrameRateEnable", True)
+        if ret_en != 0:
+            print(f"开启帧率控制失败！ret[0x%x]" % ret_en)
+        ret_fps = cam.MV_CC_SetFloatValue("AcquisitionFrameRate", 9.0)
+        if ret_fps == 0:
+            print("采集帧率已固定为 6 帧/秒")
+        else:
+            print(f"设置采集帧率失败！ret[0x%x]" % ret_fps)
+
         # 可选：设置自动曝光范围（根据需要调整）
         # # 最小曝光时间（单位：μs）
         # ret_min = cam.MV_CC_SetIntValue("ExposureTimeMin", 1000)

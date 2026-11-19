@@ -26,6 +26,7 @@ import json
 import os
 import queue
 import re
+import sys
 import threading
 import time
 import uuid
@@ -35,10 +36,35 @@ import cv2
 import numpy as np
 
 # 根目录：camera_socket-main/datasets/
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_BASE_DIR = os.path.join(_SCRIPT_DIR, "datasets")
 
 # 阶段照片根目录：camera_socket-main/stage_photos/（与 datasets 分开）
-_STAGE_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stage_photos")
+_STAGE_BASE_DIR = os.path.join(_SCRIPT_DIR, "stage_photos")
+
+# 分区域模式（--area N）：datasets/<data_dir>/、stage_photos/<data_dir>/，隔离多进程数据
+def _area_subdir():
+    for i, arg in enumerate(sys.argv):
+        if arg == '--area' and i + 1 < len(sys.argv):
+            try:
+                area = str(int(sys.argv[i + 1]))
+            except ValueError:
+                return None
+            areas_path = os.path.join(_SCRIPT_DIR, "areas.json")
+            try:
+                with open(areas_path, "r", encoding="utf-8") as f:
+                    areas = json.load(f)
+                if area in areas:
+                    return areas[area].get("data_dir", f"area{area}")
+            except Exception:
+                pass
+            return None
+    return None
+
+_AREA_DIR = _area_subdir()
+if _AREA_DIR:
+    _BASE_DIR = os.path.join(_BASE_DIR, _AREA_DIR)
+    _STAGE_BASE_DIR = os.path.join(_STAGE_BASE_DIR, _AREA_DIR)
 
 # 请求 action -> 类别 映射
 ACTION_CATEGORY = {
@@ -116,6 +142,7 @@ class DatasetSaver:
         meta = {
             "category": category,
             "request_action": action,
+            "area": _AREA_DIR,  # 分区域模式下来源区域目录（单进程为 None）
             "timestamp": task["timestamp_iso"],
             "image_file": f"{stem}.jpg" if frame is not None else None,
             "image_shape": list(frame.shape) if frame is not None else None,
@@ -142,6 +169,7 @@ class DatasetSaver:
         meta = {
             "stage": stage,
             "seq": seq,
+            "area": _AREA_DIR,  # 分区域模式下来源区域目录（单进程为 None）
             "timestamp": task["timestamp_iso"],
             "image_file": f"{stem}.jpg" if frame is not None else None,
             "image_shape": list(frame.shape) if frame is not None else None,

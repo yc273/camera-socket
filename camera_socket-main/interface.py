@@ -34,7 +34,7 @@ class CameraApp(QMainWindow):
         self.is_auto_capturing = False
         self.current_capture_count = 0
         self.total_captures_needed = 0
-        self.captures_per_second = 5  # 默认每秒5张
+        self.captures_per_second = 6  # 默认每秒6张
         
         # 创建UI
         self.setup_ui()
@@ -90,7 +90,7 @@ class CameraApp(QMainWindow):
         # 每秒采集张数设置
         self.fps_spinbox = QSpinBox()
         self.fps_spinbox.setRange(1, 30)  # 1-30张/秒
-        self.fps_spinbox.setValue(5)
+        self.fps_spinbox.setValue(6)
         self.fps_spinbox.valueChanged.connect(self.on_fps_changed)
         
         fps_label = QLabel("每秒采集张数:")

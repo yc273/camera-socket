@@ -23,6 +23,12 @@ test_output/
 # 运行时生成的帧
 data/frame.jpg
 
+# 运行产生的数据集/快照图片/日志，本地保留、不入库
+datasets/
+stage_photos/
+logs/
+data/
+
 # IDE / 编辑器
 .vscode/
 .idea/

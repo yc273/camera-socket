@@ -160,19 +160,12 @@ class VisionAPISocketServer:
             # 检查相机连接状态
             camera_connected = detector.camera_connected if hasattr(detector, 'camera_connected') else False
             
-            # 如果相机未连接，对于需要相机的请求返回提示帧
-            if not camera_connected and req in ['cross_points_without_granding', 'screw_points', 'board_angle', 'board_position', 'u_points', 'slot_points', 'get_frame']:
-                logging.warning("相机未连接，返回提示帧")
-                
-                # 创建提示帧
-                disconnected_frame = self._create_disconnected_frame()
-                _, buffer = cv2.imencode('.jpg', disconnected_frame)
-                frame_base64 = base64.b64encode(buffer).decode('utf-8')
-                
+            # 如果相机未连接，对于需要相机的请求直接返回文字提醒（不再生成黑底提示图）
+            if not camera_connected and req in ['cross_points_without_granding', 'screw_points', 'board_angle', 'board_position', 'u_points', 'slot_points', 'get_frame', 'detect_count']:
+                logging.warning("相机未连接，返回文字提醒")
+
                 response = {
                     'success': False,
-                    'frame': frame_base64,
-                    'shape': disconnected_frame.shape,
                     'camera_status': 'disconnected',
                     'message': '相机未连接，请等待'
                 }
